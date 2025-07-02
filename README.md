@@ -1,16 +1,8 @@
-# US3RN-Pytorch
+# HOTNet
 The code is for the work:
 
 ```
-@article{ma2021deep,
-  title={Deep Unfolding Network for Spatiospectral Image Super-Resolution},
-  author={Qing Ma, Junjun Jiang, Xianming Liu, and Jiayi Ma},
-  journal={IEEE Transactions on Computational Imaging},
-  volume={},
-  number={},
-  pages={},
-  year={2022},
-}
+
 ```
 
 
