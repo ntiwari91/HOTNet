@@ -1,0 +1,8 @@
+README.md
+setup.py
+hat.egg-info/PKG-INFO
+hat.egg-info/SOURCES.txt
+hat.egg-info/dependency_links.txt
+hat.egg-info/not-zip-safe
+hat.egg-info/requires.txt
+hat.egg-info/top_level.txt
