@@ -1,4 +1,4 @@
-This is built upon 
+This is built upon [US3RN](https://github.com/junjun-jiang/US3RN) and [HAT](https://github.com/XPixelGroup/HAT)
 
 ## Requirements
 
