@@ -28,3 +28,13 @@ python main.py --mode test --nEpochs 150
 
 
 
+## If you like this work, then consider citing
+
+```
+@article{tiwari2025hotnet,
+  title={HOTNet: A hybrid optimization and transformer network for hyperspectral image super-resolution},
+  author={tiwari, Naveen and Rajput, Shyam},
+  journal={Journal of Electronic Imaging},
+  year={2025}
+}
+```
