@@ -10,190 +10,148 @@ from basicsr.archs.arch_util import to_2tuple, trunc_normal_
 device = 'cuda'
 
 
+## Unfolding Network
+class UNInitBlock(nn.Module):
 
-class InSSSRBlock(nn.Module):
     def __init__(self, in_channels, out_channels, ratio):
-        super(InSSSRBlock, self).__init__()
-
+        super(UNInitBlock, self).__init__()
         self.alpha_hidden = nn.Parameter(torch.rand(1, requires_grad=True, device=device))
         self.beta = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
         self.gamma = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
-
         self.upsample1 = Upsample(in_channels, ratio)
         self.upsample2 = Upsample(in_channels, ratio)
         self.upsample3 = Upsample(out_channels, ratio)
-
         self.downsample1 = Downsample(in_channels, ratio)
         self.downsample2 = Downsample(out_channels, ratio)
-
         self.nl = NONLocalBlock2D(in_channels=in_channels)
-
         self.correct = nn.Sequential(
             resblock(out_channels, 3),
             resblock(out_channels, 3),
             resblock(out_channels, 3),
         )
-
         self.channels_inc = nn.Parameter(torch.randn(out_channels, in_channels, 1, 1, requires_grad=True, device=device))
         self.channels_dec = nn.Parameter(torch.randn(in_channels, out_channels, 1, 1, requires_grad=True, device=device))
         self.conv1x1_1 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=1)
         self.relu = nn.ReLU()
 
-    def forward(self, w):
+    def forward(self, Y):
         alpha = self.alpha_hidden
-        ltw = self.upsample1(w)
-        d_ltw = self.downsample1(2*alpha*ltw)
+        ltw = self.upsample1(Y)
+        d_ltw = self.downsample1(2 * alpha * ltw)
         nl_d_wt = self.nl(d_ltw)
-        res_y = self.upsample2(nl_d_wt)
-        y = self.relu((2*alpha*ltw-(2*alpha/self.beta)*res_y)/self.beta)
-        g = F.conv2d(-y, self.channels_inc, stride=1)
-        wrt = F.conv2d(w, self.channels_inc, stride=1)
-        z = self.relu(self.conv1x1_1(2*(1-alpha)*wrt))
-        h = self.upsample3(-z)
-        x = self.relu(self.correct(self.beta * g + self.gamma * h))
-        xr = F.conv2d(x, self.channels_dec, stride=1)
-        u = xr - y
-        lx = self.downsample2(x)
-        v = lx - z
+        res_Phi = self.upsample2(nl_d_wt)
+        Phi = self.relu((2 * alpha * ltw - (2 * alpha / self.beta) * res_Phi) / self.beta)
+        g = F.conv2d(-Phi, self.channels_inc, stride=1)
+        wrt = F.conv2d(Y, self.channels_inc, stride=1)
+        Psi = self.relu(self.conv1x1_1(2 * (1 - alpha) * wrt))
+        h = self.upsample3(-Psi)
+        X = self.relu(self.correct(self.beta * g + self.gamma * h))
+        XR = F.conv2d(X, self.channels_dec, stride=1)
+        P = XR - Phi
+        LX = self.downsample2(X)
+        Q = LX - Psi
+        return X, Phi, Psi, P, Q
 
-        return x, y, z, u, v
+class UNIterBlock(nn.Module):
 
-
-class MidSSSRBlock(nn.Module):
     def __init__(self, in_channels, out_channels, ratio):
-        super(MidSSSRBlock, self).__init__()
-
+        super(UNIterBlock, self).__init__()
         self.alpha_hidden = nn.Parameter(torch.rand(1, requires_grad=True, device=device))
         self.beta = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
         self.gamma = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
-        
-        ################# this line is newly added "eta" as a learnable parameter #################
         self.eta = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
-
         self.upsample1 = Upsample(in_channels, ratio)
         self.upsample2 = Upsample(in_channels, ratio)
         self.upsample3 = Upsample(out_channels, ratio)
         self.upsample4 = Upsample(out_channels, ratio)
-
         self.downsample1 = Downsample(in_channels, ratio)
         self.downsample2 = Downsample(out_channels, ratio)
         self.downsample3 = Downsample(out_channels, ratio)
         self.downsample4 = Downsample(out_channels, ratio)
-
         self.nl = NONLocalBlock2D(in_channels=in_channels)
-
         self.correct = nn.Sequential(
             resblock(out_channels, 3),
             resblock(out_channels, 3),
             resblock(out_channels, 3),
         )
-
         self.channels_inc = nn.Parameter(torch.randn(out_channels, in_channels, 1, 1, requires_grad=True, device=device))
         self.channels_dec = nn.Parameter(torch.randn(in_channels, out_channels, 1, 1, requires_grad=True, device=device))
         self.conv1x1_1 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=1)
         self.relu = nn.ReLU()
 
-    def forward(self, w, x, u, v):
+    def forward(self, Y, X, P, Q):
         alpha = self.alpha_hidden
-        ################# this line is newly added: eta passed through ReLU before use #################
         eta = self.relu(self.eta)
-        ltw = self.upsample1(w)
+        ltw = self.upsample1(Y)
+        XKR = F.conv2d(X, self.channels_dec, stride=1)
+        Phi = 2 * alpha * ltw + self.beta * (P + XKR)
+        d_Phi = self.downsample1(Phi)
+        nl_d_Phi = self.nl(d_Phi)
+        res_Phi = self.upsample2(nl_d_Phi)
+        Phi = self.relu((Phi - (2 * alpha / self.beta) * res_Phi) / self.beta)
+        g = F.conv2d(P - Phi, self.channels_inc, stride=1)
+        LX = self.downsample2(X)
+        LTLX = self.upsample3(LX)
+        XKRRt = F.conv2d(XKR, self.channels_inc, stride=1)
+        LXK = self.downsample3(X)
+        wrt = F.conv2d(Y, self.channels_inc, stride=1)
+        Psi = self.gamma * (LXK + Q) + 2 * (1 - alpha) * wrt
+        Psi = self.relu(self.conv1x1_1(Psi))
+        h = self.upsample4(Q - Psi)
+        X_new = self.relu(self.correct(X - eta * ((self.beta * g + self.gamma * LTLX) + (self.beta * XKRRt + self.gamma * h))))
+        X_newR = F.conv2d(X_new, self.channels_dec, stride=1)
+        P_new = P + X_newR - Phi
+        LX_new = self.downsample4(X_new)
+        Q_new = Q + LX_new - Psi
+        return X_new, Phi, Psi, P_new, Q_new
 
-        xkr = F.conv2d(x, self.channels_dec, stride=1)
+class UNFinalBlock(nn.Module):
 
-        y = 2*alpha*ltw + self.beta* (u + xkr)
-        d_y = self.downsample1(y)
-        nl_d_y = self.nl(d_y)
-        res_y = self.upsample2(nl_d_y)
-
-        y = self.relu((y-(2*alpha/self.beta)*res_y)/self.beta)
-        g = F.conv2d(u - y, self.channels_inc, stride=1)
-
-
-
-        lx = self.downsample2(x)
-        ltlx = self.upsample3(lx)
-
-        xkrrt = F.conv2d(xkr, self.channels_inc, stride=1)
-
-        lxk = self.downsample3(x)
-
-        wrt = F.conv2d(w, self.channels_inc, stride=1)
-        z = self.gamma * (lxk+v) + 2*(1-alpha)*wrt
-        z = self.relu(self.conv1x1_1(z))
-        h = self.upsample4(v - z)
-
-        xk1 = self.relu(self.correct(x - eta * ((self.beta * g + self.gamma * ltlx) + (self.beta * xkrrt + self.gamma * h))))
-
-        xk1r = F.conv2d(xk1, self.channels_dec, stride=1)
-        uk1 = u + xk1r - y
-        lxk1 = self.downsample4(xk1)
-        vk1 = v + lxk1 - z
-
-        return xk1, y, z, uk1, vk1
-
-
-class OutSSSRBlock(nn.Module):
     def __init__(self, in_channels, out_channels, ratio):
-        super(OutSSSRBlock, self).__init__()
+        super(UNFinalBlock, self).__init__()
         self.alpha_hidden = nn.Parameter(torch.rand(1, requires_grad=True, device=device))
         self.beta = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
         self.gamma = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
-        ################# this line is newly added "eta" as a learnable parameter #################
         self.eta = nn.Parameter(torch.randn(1, requires_grad=True, device=device))
-
         self.upsample1 = Upsample(in_channels, ratio)
         self.upsample2 = Upsample(in_channels, ratio)
         self.upsample3 = Upsample(out_channels, ratio)
         self.upsample4 = Upsample(out_channels, ratio)
-
         self.downsample1 = Downsample(in_channels, ratio)
         self.downsample2 = Downsample(out_channels, ratio)
         self.downsample3 = Downsample(out_channels, ratio)
-
         self.nl = NONLocalBlock2D(in_channels=in_channels)
-
         self.correct = nn.Sequential(
             resblock(out_channels, 3),
             resblock(out_channels, 3),
             resblock(out_channels, 3),
         )
-
         self.channels_inc = nn.Parameter(torch.randn(out_channels, in_channels, 1, 1, requires_grad=True, device=device))
         self.channels_dec = nn.Parameter(torch.randn(in_channels, out_channels, 1, 1, requires_grad=True, device=device))
         self.conv1x1_1 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=1)
-
         self.relu = nn.ReLU()
 
-    def forward(self, w, x, u, v):
+    def forward(self, Y, X, P, Q):
         alpha = self.alpha_hidden
-        ################# this line is newly added: eta passed through ReLU before use #################
         eta = self.relu(self.eta)
-        ltw = self.upsample1(w)
-        xkr = F.conv2d(x, self.channels_dec, stride=1)
-        y = 2*alpha*ltw + self.beta * (u + xkr)
-        d_y = self.downsample1(y)
-        nl_d_y = self.nl(d_y)
-        res_y = self.upsample2(nl_d_y)
-        y = self.relu((y-(2*alpha/self.beta)*res_y)/self.beta)
-        g = F.conv2d(u - y, self.channels_inc, stride=1)
-
-        lx = self.downsample2(x)
-        ltlx = self.upsample3(lx)
-
-        xkrrt = F.conv2d(xkr, self.channels_inc, stride=1)
-
-        lxk = self.downsample3(x)
-
-        wrt = F.conv2d(w, self.channels_inc, stride=1)
-        z = self.gamma * (lxk+v) + 2*(1-alpha)*wrt
-        z = self.relu(self.conv1x1_1(z))
-        h = self.upsample4(v - z)
-
-        xk1 = self.relu(self.correct(x - eta * ((self.beta * g + self.gamma * ltlx) + (self.beta * xkrrt + self.gamma * h))))
-
-
-        return xk1, y, z
+        ltw = self.upsample1(Y)
+        XKR = F.conv2d(X, self.channels_dec, stride=1)
+        Phi = 2 * alpha * ltw + self.beta * (P + XKR)
+        d_Phi = self.downsample1(Phi)
+        nl_d_Phi = self.nl(d_Phi)
+        res_Phi = self.upsample2(nl_d_Phi)
+        Phi = self.relu((Phi - (2 * alpha / self.beta) * res_Phi) / self.beta)
+        g = F.conv2d(P - Phi, self.channels_inc, stride=1)
+        LX = self.downsample2(X)
+        LTLX = self.upsample3(LX)
+        XKRRt = F.conv2d(XKR, self.channels_inc, stride=1)
+        LXK = self.downsample3(X)
+        wrt = F.conv2d(Y, self.channels_inc, stride=1)
+        Psi = self.gamma * (LXK + Q) + 2 * (1 - alpha) * wrt
+        Psi = self.relu(self.conv1x1_1(Psi))
+        h = self.upsample4(Q - Psi)
+        X_new = self.relu(self.correct(X - eta * ((self.beta * g + self.gamma * LTLX) + (self.beta * XKRRt + self.gamma * h))))
+        return X_new, Phi, Psi
 
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
@@ -427,7 +385,43 @@ class PatchUnEmbed(nn.Module):
         x = x.transpose(1, 2).contiguous().view(x.shape[0], self.embed_dim, x_size[0], x_size[1])  # b Ph*Pw c
         return x
 
-class HAB(nn.Module):
+class CAFL(nn.Module):
+    def __init__(self, dim):
+        super(CAFL, self).__init__()
+        self.fusion = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.GELU(),
+            nn.Linear(dim, dim)
+        )
+        self.gate = nn.Sigmoid()
+
+    def forward(self, attn_x, conv_x):
+        # attn_x, conv_x: (B, N, C)
+        fusion_input = torch.cat([attn_x, conv_x], dim=-1)
+        fused = self.fusion(fusion_input)
+        gate = self.gate(fused)
+        return attn_x * gate + conv_x * (1 - gate)
+
+class MLP(nn.Module):
+    def __init__(self, dim, mlp_ratio=4., drop=0.):
+        super(MLP, self).__init__()
+        hidden_dim = int(dim * mlp_ratio)
+        self.fc1 = nn.Linear(dim, hidden_dim)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(hidden_dim, dim)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+    
+
+
+class MATBlock(nn.Module):  # Multi-Attention Transformer
     r""" Hybrid Attention Block.
 
     Args:
@@ -492,9 +486,14 @@ class HAB(nn.Module):
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
     
-                # split image into non-overlapping patches
-        self.patch_embed = PatchEmbed(
-            embed_dim=124)
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(embed_dim=124)
+        
+        ########## Cross Attention Fusion layer ##########
+        self.cafl = CAFL(dim)
+        self.mlp = MLP(dim, mlp_ratio=mlp_ratio, drop=drop)
+        self.norm2 = norm_layer(dim)
+        ##################################################
 
         # merge non-overlapping patches into image
         self.patch_unembed = PatchUnEmbed(
@@ -522,6 +521,7 @@ class HAB(nn.Module):
               attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
 
               return attn_mask
+    
     def calculate_rpi_sa(self):
         # calculate relative position index for SA
         coords_h = torch.arange(self.window_size)
@@ -565,6 +565,7 @@ class HAB(nn.Module):
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nw*b, window_size, window_size, c
         x_windows = x_windows.view(-1, self.window_size * self.window_size, c)  # nw*b, window_size*window_size, c
+
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         rpi_sa= self.calculate_rpi_sa()
         attn_windows = self.attn(x_windows, rpi=rpi_sa, mask=attn_mask)
@@ -579,77 +580,66 @@ class HAB(nn.Module):
         else:
             attn_x = shifted_x
         attn_x = attn_x.view(b, h * w, c)
-        # FFN
-        x = shortcut + self.drop_path(attn_x) + conv_x * self.conv_scale
+
+        # Cross-Attention Fusion Layer
+        fused_x = self.cafl(attn_x, conv_x)
+
+        # Residual Connection with DropPath
+        x = shortcut + self.drop_path(fused_x)
+
+        # MLP + Second Norm + Residual
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         x=self.patch_unembed(x, x_size)
+        
         return x
 
 
-class S3RNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=204, ratio=4):
-        super(S3RNet, self).__init__()
-        self.body1 = InSSSRBlock(in_channels, out_channels, ratio)
-        self.body2 = MidSSSRBlock(in_channels, out_channels, ratio)
-        #self.body21 = MidSSSRBlock(in_channels, out_channels, ratio)
-        self.body3 = OutSSSRBlock(in_channels, out_channels, ratio)
-        self.body4 = HAB()
-        #self.body5 = HAB()
-        #self.body6 = HAB()
-        #self.body7 = HAB()
-        #self.body8 = HAB()
-        self.res_x = nn.Sequential(
+class HOTNet(nn.Module):
+    def __init__(self, in_channels=3, out_channels=31, ratio=4):
+        super(HOTNet, self).__init__()
+        self.UNInitBlock = UNInitBlock(in_channels, out_channels, ratio)
+        self.UNIterBlocks = nn.ModuleList([
+            UNIterBlock(in_channels, out_channels, ratio) for _ in range(1)
+        ])
+        self.UNFinalBlock = UNFinalBlock(in_channels, out_channels, ratio)
+        self.MATBlocks = nn.ModuleList([MATBlock(dim=out_channels) for _ in range(1)])
+        self.X_res = nn.Sequential(
             Upsample(in_channels, ratio),
             nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1)
         )
-
-        self.convx = nn.Sequential(
-            nn.Conv2d(in_channels=4 * out_channels, out_channels= out_channels, kernel_size=3, stride=1, padding=1, bias=True)
+        self.X_fuse = nn.Sequential(
+            nn.Conv2d(in_channels=4 * out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         )
+        self.X_fuse2 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=True)
 
-        self.convxx = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=True)
-    
-
-    def forward(self, w):
+    def forward(self, Y):
         listX = []
-        listY = []
-        listZ = []
-        res_x = self.res_x(w)
-        x1, y1, z1, u, v = self.body1(w)
-        listX.append(x1)
-        listY.append(y1)
-        listZ.append(z1)
-        x2, y2, z2, u, v = self.body2(w, x1, u, v)
-        listX.append(x2)
-        listY.append(y2)
-        listZ.append(z2)
-        x3, y3, z3, u, v = self.body2(w, x2, u, v)
-        listX.append(x3)
-        listY.append(y3)
-        listZ.append(z3)
-        #x31, y31, z31, u, v = self.body21(w, x2, u, v)
-        #listX.append(x31)
-        #listY.append(y31)
-        #listZ.append(z31)
-        x4, y4, z4 = self.body3(w, x3, u, v)
-        listX.append(x4)
-        listY.append(y4)
-        listZ.append(z4)
-
-        xx = torch.cat([x1, x2, x3, x4], dim=1)
-        xx = self.body4(xx)+xx
-        #xx2 = self.body5(xx1)+xx1
-        #xx3 = self.body6(xx2)+xx2
-        #xx4 = self.body7(xx3)+xx3
-        #xx5 = self.body8(xx4)+xx4
-        xx = self.convx(xx)#(xx5)
-        x = xx + res_x 
-        x = self.convxx(x)
-
-        return x, y4, z4, listX, listY, listZ
-
+        listPhi = []
+        listPsi = []
+        X_res = self.X_res(Y)
+        X, Phi, Psi, P, Q = self.UNInitBlock(Y)
+        listX.append(X)
+        listPhi.append(Phi)
+        listPsi.append(Psi)
+        for block in self.UNIterBlocks:
+            X, Phi, Psi, P, Q = block(Y, X, P, Q)
+            listX.append(X)
+            listPhi.append(Phi)
+            listPsi.append(Psi)
+        X, Phi, Psi = self.UNFinalBlock(Y, X, P, Q)
+        listX.append(X)
+        listPhi.append(Phi)
+        listPsi.append(Psi)
+        XX = torch.cat(listX[2:], dim=1)
+        for mat_block in self.MATBlocks:
+            XX = mat_block(XX) + XX
+        XX = self.X_fuse(XX)
+        X = XX + X_res
+        X = self.X_fuse2(X)
+        return X, Phi, Psi, listX, listPhi, listPsi
 
 if __name__ == '__main__':
     x = torch.randn(2, 3, 6, 6)
-    model = S3RNet(3, 6, 2)
-    x, listx = model(x)
+    model = HOTNet(3, 6, 2)
+    x, Phi, Psi, listX, listPhi, listPsi = model(x)
     print(x.size())
