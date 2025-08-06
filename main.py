@@ -12,11 +12,15 @@ import socket
 
 from torch.optim.lr_scheduler import StepLR, MultiStepLR
 from torch.utils.data import DataLoader
-from model import S3RNet
+
+# For calculating Flops
+#from model_original_flops_cal import HOTNet
+from model import HOTNet
 
 from data import get_patch_training_set, get_test_set
 from torch.autograd import Variable
 from psnr import MPSNR
+
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 
@@ -59,7 +63,7 @@ print('===> Building model')
 
 
 
-model = S3RNet().cuda()
+model = HOTNet().cuda()
 print('# network parameters: {}'.format(sum(param.numel() for param in model.parameters())))
 model = torch.nn.DataParallel(model).cuda()
 
@@ -146,9 +150,6 @@ def train(epoch, optimizer, scheduler):
 
 def test(epoch):
     avg_psnr = 0
-    avg_ssim = 0
-    avg_sam = 0
-    avg_ergas = 0
     avg_time = 0
     model.eval()
     with torch.no_grad():
@@ -167,9 +168,7 @@ def test(epoch):
             HX = torch.squeeze(HX).permute(1, 2, 0).cpu().numpy()
             
             psnr = MPSNR(HX,X)
-            ssim = MSSIM(HX,X)
-            sam = SAM(HX,X)
-            ergas = ERGAS(HX,X,opt.upscale_factor) #scale = 4
+
             im_name = batch[2][0]
             # print(im_name)
             # print(end_time - start_time)
@@ -177,26 +176,14 @@ def test(epoch):
             (path, filename) = os.path.split(im_name)
             io.savemat('result/'+ filename, {'HX': HX}) #io.savemat(opt.outputpath + filename, {'HX': HX})
             avg_psnr += psnr
-            avg_ssim += ssim
-            avg_sam += sam
-            avg_ergas += ergas
     print('VALIDATION')
     print("===> PSNR: {:.4f} dB".format(avg_psnr / len(testing_data_loader)))
-    print("===> SSIM: {:.4f} ".format(avg_ssim / len(testing_data_loader)))
-    print("===> SAM: {:.4f} s".format(avg_sam / len(testing_data_loader)))
-    print("===> ERGAS: {:.4f} s".format(avg_ergas / len(testing_data_loader)))
     print("===> time: {:.4f} s".format(avg_time / len(testing_data_loader)))
     tb_logger.add_scalar('psnr', avg_psnr / len(testing_data_loader), current_step)
-    tb_logger.add_scalar('ssim', avg_ssim / len(testing_data_loader), current_step)
-    tb_logger.add_scalar('sam', avg_sam / len(testing_data_loader), current_step)
-    tb_logger.add_scalar('ergas', avg_ergas / len(testing_data_loader), current_step)
     with open(log_file_path, 'a') as log_file:
         log_file.write('\n VALIDATION')
         log_file.write(' Epoch: '+str(epoch))
         log_file.write("\n===> PSNR: {:.4f} dB".format(avg_psnr / len(testing_data_loader)))
-        log_file.write("\n===> SSIM: {:.4f} ".format(avg_ssim / len(testing_data_loader)))
-        log_file.write("\n===> SAM: {:.4f} ".format(avg_sam / len(testing_data_loader)))
-        log_file.write("\n===> ERGAS: {:.4f} ".format(avg_ergas / len(testing_data_loader)))
         log_file.write("\n===> time: {:.4f} s".format(avg_time / len(testing_data_loader)))
     #print()
     return avg_psnr / len(testing_data_loader)
