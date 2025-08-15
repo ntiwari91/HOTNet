@@ -33,8 +33,12 @@ python main.py --mode test --nEpochs 150
 ```
 @article{tiwari2025hotnet,
   title={HOTNet: A hybrid optimization and transformer network for hyperspectral image super-resolution},
-  author={tiwari, Naveen and Rajput, Shyam},
+  author={Tiwari, Naveen Kumar and Rajput, Shyam Singh},
   journal={Journal of Electronic Imaging},
-  year={2025}
+  volume={34},
+  number={4},
+  pages={043036--043036},
+  year={2025},
+  publisher={Society of Photo-Optical Instrumentation Engineers}
 }
 ```
